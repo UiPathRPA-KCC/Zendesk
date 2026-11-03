@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>예약 날짜 선택</title>
+<style>
+:root {
+  --bg: #f6f8f9;
+  --surface: #ffffff;
+  --text: #1c2b33;
+  --muted: #6b7c86;
+  --border: #dde4e8;
+  --accent: #0f5c6e;
+  --accent-text: #ffffff;
+  --hover: #e8f0f2;
+  --off: #b4c0c7;
+  --today: #0f5c6e;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14191c;
+    --surface: #1c2327;
+    --text: #e4eaed;
+    --muted: #93a3ac;
+    --border: #2f3a40;
+    --accent: #5dbbd0;
+    --accent-text: #0c1c21;
+    --hover: #26323a;
+    --off: #53626b;
+    --today: #5dbbd0;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+}
+.card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+}
+h1 { font-size: 17px; font-weight: 700; margin: 0 0 4px; }
+.sub { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+.nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.nav .label { font-size: 16px; font-weight: 700; }
+.nav button {
+  width: 36px; height: 36px; border-radius: 8px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text); font-size: 18px; cursor: pointer;
+}
+.nav button:hover:not(:disabled) { background: var(--hover); }
+.nav button:disabled { color: var(--off); cursor: default; }
+.grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dow { text-align: center; font-size: 12px; color: var(--muted); padding: 6px 0; }
+.dow:first-child { color: #d0555a; }
+.dow:last-child { color: #4a7fc1; }
+.day {
+  aspect-ratio: 1; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text);
+  font: inherit; font-size: 14px; cursor: pointer; position: relative;
+}
+.day:hover:not(:disabled):not(.sel) { background: var(--hover); }
+.day:disabled { color: var(--off); cursor: not-allowed; text-decoration: line-through; text-decoration-thickness: 1px; }
+.day.today::after {
+  content: ""; position: absolute; left: 50%; bottom: 5px;
+  width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--today);
+}
+.day.sel { background: var(--accent); color: var(--accent-text); font-weight: 700; }
+.day.sel::after { background: var(--accent-text); }
+.day:focus-visible, .nav button:focus-visible, .confirm:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.empty { visibility: hidden; }
+.picked { margin: 16px 0 12px; font-size: 14px; min-height: 20px; color: var(--muted); }
+.picked strong { color: var(--text); }
+.confirm {
+  width: 100%; height: 44px; border: 0; border-radius: 8px;
+  background: var(--accent); color: var(--accent-text);
+  font: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
+}
+.confirm:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+.done { margin-top: 12px; font-size: 14px; color: var(--text); }
+@media (prefers-reduced-motion: no-preference) {
+  .day, .nav button { transition: background-color .12s; }
+}
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>예약 날짜를 선택해 주세요</h1>
+  <p class="sub">선택 가능한 날짜만 활성화되어 있어요.</p>
+
+  <div class="nav">
+    <button id="prev" type="button" aria-label="이전 달">‹</button>
+    <div class="label" id="monthLabel" aria-live="polite"></div>
+    <button id="next" type="button" aria-label="다음 달">›</button>
+  </div>
+
+  <div class="grid" id="dow"></div>
+  <div class="grid" id="days" role="group" aria-label="날짜 선택"></div>
+
+  <p class="picked" id="picked">날짜를 선택해 주세요.</p>
+  <button class="confirm" id="confirm" type="button" disabled>이 날짜로 예약하기</button>
+  <p class="done" id="done" role="status"></p>
+</main>
+
+<script>
+// ===== 설정: 필요에 맞게 수정하세요 =====
+const CONFIG = {
+  minLeadDays: 1,            // 오늘로부터 최소 며칠 뒤부터 선택 가능 (0 = 오늘 포함)
+  maxAheadDays: 60,          // 오늘로부터 최대 며칠 뒤까지 선택 가능
+  disabledWeekdays: [0],     // 선택 불가 요일 (0=일, 1=월, ... 6=토)
+  blockedDates: []           // 선택 불가 날짜 예: ["2026-12-25", "2027-01-01"]
+};
+// =======================================
+
+const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+const today = startOfDay(new Date());
+const minDate = new Date(today); minDate.setDate(minDate.getDate() + CONFIG.minLeadDays);
+const maxDate = new Date(today); maxDate.setDate(maxDate.getDate() + CONFIG.maxAheadDays);
+
+let view = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+let selected = null;
+
+function isAvailable(d) {
+  return d >= minDate && d <= maxDate &&
+    !CONFIG.disabledWeekdays.includes(d.getDay()) &&
+    !CONFIG.blockedDates.includes(iso(d));
+}
+
+function render() {
+  const y = view.getFullYear(), m = view.getMonth();
+  $("monthLabel").textContent = `${y}년 ${m + 1}월`;
+  $("prev").disabled = new Date(y, m, 1) <= new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+  $("next").disabled = new Date(y, m + 1, 1) > maxDate;
+
+  const box = $("days");
+  box.innerHTML = "";
+  const lead = new Date(y, m, 1).getDay();
+  const last = new Date(y, m + 1, 0).getDate();
+
+  for (let i = 0; i < lead; i++) {
+    const s = document.createElement("span");
+    s.className = "empty";
+    box.appendChild(s);
+  }
+  for (let day = 1; day <= last; day++) {
+    const d = new Date(y, m, day);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = day;
+    b.className = "day";
+    b.setAttribute("aria-label", `${m + 1}월 ${day}일 ${WEEK[d.getDay()]}요일`);
+    if (iso(d) === iso(today)) b.classList.add("today");
+    if (!isAvailable(d)) b.disabled = true;
+    if (selected && iso(d) === iso(selected)) { b.classList.add("sel"); b.setAttribute("aria-pressed", "true"); }
+    b.addEventListener("click", () => pick(d));
+    box.appendChild(b);
+  }
+}
+
+function pick(d) {
+  selected = d;
+  $("picked").innerHTML = `선택한 날짜: <strong>${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEK[d.getDay()]})</strong>`;
+  $("confirm").disabled = false;
+  $("done").textContent = "";
+  render();
+}
+
+function confirmBooking() {
+  if (!selected) return;
+  const value = iso(selected); // 예: "2026-11-03"
+  $("done").textContent = `${selected.getMonth() + 1}월 ${selected.getDate()}일로 선택했어요.`;
+  $("confirm").disabled = true;
+
+  // 선택한 날짜를 외부로 전달하는 지점입니다.
+  // 사용하는 연동 방식(웹뷰, 자체 서버 등)에 맞춰 아래를 연결하세요.
+  document.dispatchEvent(new CustomEvent("booking:selected", { detail: { date: value } }));
+  console.log("selected date:", value);
+}
+
+WEEK.forEach((w) => {
+  const e = document.createElement("div");
+  e.className = "dow";
+  e.textContent = w;
+  $("dow").appendChild(e);
+});
+$("prev").addEventListener("click", () => { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); render(); });
+$("next").addEventListener("click", () => { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); render(); });
+$("confirm").addEventListener("click", confirmBooking);
+render();
+</script>
+</body>
+</html>
